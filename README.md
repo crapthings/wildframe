@@ -4,6 +4,8 @@ A procedural open-world playground built with React Three Fiber.
 
 Explore a seeded landscape of rolling terrain, mountain ridges, and coastline. Wildframe is an experimental browser-based world, with an emphasis on terrain streaming, third-person exploration, and real-time rendering.
 
+[Browser demo](https://crapthings.github.io/wildframe/) — available after the first successful Pages deployment. Use a desktop browser with WebGL2, a keyboard, and a mouse. The high-detail tree downloads after entering the scene and may take time on slower connections.
+
 ## Current features
 
 - A 1,024 × 1,024 meter world with deterministic terrain generation.
@@ -28,6 +30,16 @@ Requires Node.js `^20.19.0 || >=22.12.0` and pnpm `12.4.1`.
 The scene requires local assets; missing terrain textures or the player model will prevent loading from completing. It does not currently provide placeholder replacements.
 
 For a production bundle, run `pnpm build`, then `pnpm preview` to inspect it locally. The package remains `private: true` to prevent accidental npm publication; this does not control GitHub repository visibility.
+
+## GitHub Pages deployment
+
+The [Pages workflow](.github/workflows/pages.yml) runs when a commit is pushed to `main`, or manually from the Actions tab. A local commit alone does not deploy anything.
+
+It installs the pnpm version in `package.json`, restores the pinned release asset archive, verifies its SHA-256 checksum, and builds with the Pages base path. Source and binary assets are then served together from Pages; browsers do not fetch models directly from GitHub Releases. No personal access token or extra repository secret is required. GitHub Pages must use **GitHub Actions** as its deployment source; this has been configured for `crapthings/wildframe` and must be set separately for forks.
+
+Local development defaults to `/`. To check the project-site build locally, run `VITE_BASE_PATH=/wildframe/ pnpm build`, then `pnpm preview` and open `/wildframe/`. Model, HDR, and texture URLs all use Vite's `BASE_URL`; Worker entry points are resolved by Vite.
+
+When publishing updated assets, update `ASSET_RELEASE`, `ASSET_ARCHIVE`, and `ASSET_SHA256` in the workflow together. The site includes the full asset set and is relatively large; monitor bandwidth and optimize the sample tree before promoting the demo widely.
 
 ## Controls
 
