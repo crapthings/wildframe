@@ -1,40 +1,21 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
-import { DataTexture, MeshStandardMaterial, NearestFilter } from 'three'
+import { MeshStandardMaterial } from 'three'
 import { useWorldStore } from '@/scenes/outdoor/state/worldStore'
-import { TERRAIN_CHUNKS } from './constants'
-import { TERRAIN_BOUNDARY_PADDING, WORLD_BOUNDS } from '@/scenes/outdoor/constants'
 import { applyHeightFog } from './materials/heightFog'
 
-const MIN = WORLD_BOUNDS.minX - TERRAIN_BOUNDARY_PADDING
-const EXTENT = WORLD_BOUNDS.maxX + TERRAIN_BOUNDARY_PADDING - MIN
-const GRID = EXTENT / TERRAIN_CHUNKS.size
-
-export function DistantTerrain () {
-  const [data, setData] = useState(null)
-  const rendered = useWorldStore((state) => state.renderedChunks)
-  const mask = useMemo(() => {
-    const texture = new DataTexture(new Uint8Array(GRID * GRID * 4), GRID, GRID)
-    texture.minFilter = texture.magFilter = NearestFilter
-    texture.needsUpdate = true
-    return texture
-  }, [])
+export function DistantTerrain ({ coverage }) {
+  const [sectors, setSectors] = useState(null)
   const material = useMemo(() => {
     const result = new MeshStandardMaterial({ vertexColors: true, roughness: 1 })
     const compile = result.onBeforeCompile
     result.onBeforeCompile = function (shader, renderer) {
       compile.call(this, shader, renderer)
       applyHeightFog(shader)
-      shader.uniforms.nearCoverage = { value: mask }
-      shader.vertexShader = 'varying vec2 distantWorld;\n' + shader.vertexShader
-      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\ndistantWorld = position.xz;')
-      shader.fragmentShader = 'uniform sampler2D nearCoverage;\nvarying vec2 distantWorld;\n' + shader.fragmentShader
-      shader.fragmentShader = shader.fragmentShader.replace('void main() {', `void main() {
-        if (texture2D(nearCoverage, (distantWorld - vec2(${MIN.toFixed(1)})) / ${EXTENT.toFixed(1)}).r > 0.5) discard;
-      `)
+      coverage.applyDistant(shader)
     }
-    result.customProgramCacheKey = () => 'distant-terrain-height-fog-v1'
+    result.customProgramCacheKey = () => 'distant-terrain-height-fog-coverage'
     return result
-  }, [mask])
+  }, [coverage])
   useEffect(() => {
     const fail = () => useWorldStore.setState({ terrainError: 'Failed to generate distant mountains. Please reload.' })
     let worker
@@ -46,7 +27,7 @@ export function DistantTerrain () {
           return
         }
         if (data.error) fail()
-        else setData(data)
+        else setSectors(data.sectors)
         worker.terminate()
       }
       worker.onerror = fail
@@ -55,31 +36,22 @@ export function DistantTerrain () {
     return () => { worker?.terminate() }
   }, [])
   useLayoutEffect(() => {
-    mask.image.data.fill(0)
-    for (const key of rendered) {
-      const [column, row] = key.split(',').map(Number)
-      const x = column - MIN / TERRAIN_CHUNKS.size
-      const z = row - MIN / TERRAIN_CHUNKS.size
-      if (x >= 0 && z >= 0 && x < GRID && z < GRID) mask.image.data[(z * GRID + x) * 4] = 255
-    }
-    mask.needsUpdate = true
-  }, [rendered, mask])
-  useLayoutEffect(() => {
-    if (data) useWorldStore.setState({ distantReady: true })
-  }, [data])
-  useEffect(() => () => {
-    material.dispose()
-    mask.dispose()
-  }, [material, mask])
-  if (!data) return null
+    if (sectors) useWorldStore.setState({ distantReady: true })
+  }, [sectors])
+  useEffect(() => () => material.dispose(), [material])
+  if (!sectors) return null
   return (
-    <mesh name='distant-terrain' material={material}>
-      <bufferGeometry>
-        <bufferAttribute attach='attributes-position' args={[data.positions, 3]} />
-        <bufferAttribute attach='attributes-normal' args={[data.normals, 3]} />
-        <bufferAttribute attach='attributes-color' args={[data.colors, 3]} />
-        <bufferAttribute attach='index' args={[data.indices, 1]} />
-      </bufferGeometry>
-    </mesh>
+    <group name='distant-terrain'>
+      {sectors.map((sector) => (
+        <mesh key={sector.key} name={`distant-terrain-${sector.key}`} material={material}>
+          <bufferGeometry>
+            <bufferAttribute attach='attributes-position' args={[sector.positions, 3]} />
+            <bufferAttribute attach='attributes-normal' args={[sector.normals, 3]} />
+            <bufferAttribute attach='attributes-color' args={[sector.colors, 3]} />
+            <bufferAttribute attach='index' args={[sector.indices, 1]} />
+          </bufferGeometry>
+        </mesh>
+      ))}
+    </group>
   )
 }

@@ -3,7 +3,7 @@ import { MeshStandardMaterial, ShaderChunk } from 'three'
 import { TERRAIN_SETTINGS } from '@/scenes/outdoor/constants'
 import { applyHeightFog } from './heightFog'
 
-export function createTerrainMaterial (textures) {
+export function createTerrainMaterial (textures, coverage) {
   const [map, normalMap, roughnessMap, grassColor, grassNormal, grassRoughness, mountainColor, mountainNormal, mountainRoughness, foothillPacked, foothillNormal, barePacked, bareNormal] = textures
   const material = new MeshStandardMaterial({
     map,
@@ -17,6 +17,7 @@ export function createTerrainMaterial (textures) {
   material.onBeforeCompile = function (shader, renderer) {
     hexCompile.call(this, shader, renderer)
     applyHeightFog(shader)
+    coverage.applyNear(shader)
     Object.assign(shader.uniforms, {
       grassColor: { value: grassColor },
       grassNormal: { value: grassNormal },
@@ -153,6 +154,6 @@ export function createTerrainMaterial (textures) {
       'roughnessFactor = mix(roughnessFactor, wetRoughness, vTerrainBlend.y);\n#include <metalnessmap_fragment>'
     )
   }
-  material.customProgramCacheKey = () => 'terrain-transition-array-hex-v5'
+  material.customProgramCacheKey = () => 'terrain-transition-array-hex-coverage'
   return material
 }

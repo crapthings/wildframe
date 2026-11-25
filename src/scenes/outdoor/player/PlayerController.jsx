@@ -1,17 +1,46 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useKeyboardControls } from '@react-three/drei'
-import { MathUtils, Vector3 } from 'three'
+import { MathUtils, Raycaster, Vector3 } from 'three'
 import { PLAYER_SETTINGS, MOVEMENT_KEYS } from '@/scenes/outdoor/constants'
 import { WORLD_BOUNDS } from '@/scenes/outdoor/constants'
 import { PlayerModel } from './PlayerModel'
 import { isTerrainWalkable, sampleTerrainHeight } from '@/scenes/outdoor/terrain/generation/sampleTerrain'
 import { useWorldStore } from '@/scenes/outdoor/state/worldStore'
 import { chunkKey } from '@/scenes/outdoor/terrain/streaming/chunks'
-import { Facing, Player, Position, Velocity, simulationWorld } from '@/scenes/outdoor/state/entities'
+import { Facing, JumpState, Player, Position, Velocity, simulationWorld } from '@/scenes/outdoor/state/entities'
 import { recordTerrainEvent } from '../terrain/streaming/terrainEvents.js'
 
 const FOOTPRINT_RADIUS = PLAYER_SETTINGS.radius
+
+function stopHorizontal (velocity) {
+  velocity.x = 0
+  velocity.z = 0
+}
+
+function clearJumpInput (input) {
+  input.held = false
+  input.expiresAt = 0
+}
+
+function sampleGroundHeight (scene, ground, key, x, z) {
+  if (ground.key !== key || !ground.mesh?.parent) {
+    ground.key = key
+    ground.mesh = scene.getObjectByName(`terrain-${key}`)
+  }
+  const mesh = ground.mesh
+  if (mesh) {
+    mesh.updateWorldMatrix(true, false)
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox()
+    const top = mesh.geometry.boundingBox.max.y + mesh.matrixWorld.elements[13]
+    ground.raycaster.ray.origin.set(x, top + 1, z)
+    ground.raycaster.intersectObject(mesh, false, ground.hits)
+    const hit = ground.hits[0]
+    ground.hits.length = 0
+    if (hit) return hit.point.y
+  }
+  return sampleTerrainHeight(x, z)
+}
 
 export function PlayerController () {
   const meshRef = useRef()
@@ -22,13 +51,20 @@ export function PlayerController () {
   const targetVelocity = useRef(new Vector3())
   const velocity = useRef(new Vector3())
   const blockedKeys = useRef(new Set())
+  const jumpInput = useRef({ held: false, expiresAt: 0 })
   const waitingForChunk = useRef(null)
+  const ground = useMemo(() => ({
+    raycaster: new Raycaster(new Vector3(), new Vector3(0, -1, 0)),
+    key: null,
+    mesh: null,
+    hits: []
+  }), [])
   const camera = useThree((state) => state.camera)
   const controls = useThree((state) => state.controls)
   const [, getKeys] = useKeyboardControls()
 
   useLayoutEffect(() => {
-    const player = simulationWorld.spawn(Player, Position, Velocity, Facing)
+    const player = simulationWorld.spawn(Player, Position, Velocity, Facing, JumpState)
     player.get(Position).set(...PLAYER_SETTINGS.position)
     velocity.current = player.get(Velocity)
     playerRef.current = player
@@ -40,16 +76,32 @@ export function PlayerController () {
 
   useEffect(() => {
     const resetMovement = () => {
-      velocity.current.set(0, 0, 0)
+      stopHorizontal(velocity.current)
+      clearJumpInput(jumpInput.current)
       for (const { name } of MOVEMENT_KEYS) blockedKeys.current.add(name)
     }
     const releaseKey = (event) => {
+      if (event.code === 'Space') {
+        jumpInput.current.held = false
+        return
+      }
       for (const { name, keys } of MOVEMENT_KEYS) {
         if (keys.includes(event.code)) blockedKeys.current.delete(name)
       }
     }
     const pressKey = (event) => {
-      if (!event.repeat) releaseKey(event)
+      if (event.code !== 'Space') {
+        if (!event.repeat) releaseKey(event)
+        return
+      }
+      if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey) return
+      const target = event.target
+      if (target instanceof Element && (target.isContentEditable || target.closest('button, input, textarea, select, a[href], [role=button]'))) return
+      event.preventDefault()
+      const world = useWorldStore.getState()
+      if (event.repeat || !world.sceneEntered || world.teleportTarget || world.terrainError) return
+      jumpInput.current.held = true
+      jumpInput.current.expiresAt = performance.now() + PLAYER_SETTINGS.jumpBufferMs
     }
     const onVisibilityChange = () => {
       if (document.hidden) resetMovement()
@@ -67,18 +119,22 @@ export function PlayerController () {
     }
   }, [])
 
-  useFrame((_, delta) => {
+  // Publish movement before the model advances its animation.
+  useFrame(({ scene }, delta) => {
     const mesh = meshRef.current
 
     const player = playerRef.current
     if (!mesh || !player) return
+    const input = jumpInput.current
+    const now = performance.now()
     const position = player.get(Position)
     mesh.position.copy(position)
     mesh.rotation.y = player.get(Facing).yaw
 
     const world = useWorldStore.getState()
     if (!world.sceneEntered) {
-      velocity.current.set(0, 0, 0)
+      stopHorizontal(velocity.current)
+      clearJumpInput(input)
       for (const { name } of MOVEMENT_KEYS) blockedKeys.current.add(name)
       return
     }
@@ -86,7 +142,8 @@ export function PlayerController () {
       world.terrainLoading ||
       world.terrainCenter !== chunkKey(world.teleportTarget.x, world.teleportTarget.z)
     ))) {
-      velocity.current.set(0, 0, 0)
+      stopHorizontal(velocity.current)
+      clearJumpInput(input)
       return
     }
     if (world.teleportTarget && controls) {
@@ -102,10 +159,10 @@ export function PlayerController () {
       )
       if (!isTerrainWalkable(x, z, FOOTPRINT_RADIUS)) {
         world.clearTeleport()
-        velocity.current.set(0, 0, 0)
+        stopHorizontal(velocity.current)
         return
       }
-      const y = sampleTerrainHeight(x, z) + PLAYER_SETTINGS.height / 2
+      const y = sampleGroundHeight(scene, ground, chunkKey(x, z), x, z) + PLAYER_SETTINGS.height / 2
 
       camera.position.x += x - mesh.position.x
       camera.position.y += y - mesh.position.y
@@ -115,6 +172,8 @@ export function PlayerController () {
       controls.target.copy(mesh.position)
       controls.snap = true
       velocity.current.set(0, 0, 0)
+      player.set(JumpState, { jumpsUsed: 0, landedAt: 0 })
+      clearJumpInput(input)
       targetVelocity.current.set(0, 0, 0)
       for (const { name } of MOVEMENT_KEYS) blockedKeys.current.add(name)
       camera.getWorldDirection(cameraForward.current)
@@ -132,11 +191,12 @@ export function PlayerController () {
     const editing = activeElement?.isContentEditable ||
       ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeElement?.tagName)
     if (document.hidden || editing) {
-      velocity.current.set(0, 0, 0)
+      stopHorizontal(velocity.current)
+      clearJumpInput(input)
       for (const { name } of MOVEMENT_KEYS) blockedKeys.current.add(name)
-      return
     }
-    const isPressed = (name) => keys[name] && !blockedKeys.current.has(name)
+    if (document.hidden) return
+    const isPressed = (name) => !editing && keys[name] && !blockedKeys.current.has(name)
     const inputX = Number(isPressed('right')) - Number(isPressed('left'))
     const inputZ = Number(isPressed('forward')) - Number(isPressed('backward'))
     const hasMovementInput = inputX !== 0 || inputZ !== 0
@@ -144,6 +204,13 @@ export function PlayerController () {
       delta,
       PLAYER_SETTINGS.maxMovementDeltaSeconds
     )
+    const previousJumps = player.get(JumpState).jumpsUsed
+    let jumpsUsed = previousJumps
+    if (input.expiresAt > now && jumpsUsed < 2) {
+      velocity.current.y = jumpsUsed === 0 ? PLAYER_SETTINGS.jumpSpeed : PLAYER_SETTINGS.doubleJumpSpeed
+      jumpsUsed += 1
+      input.expiresAt = 0
+    }
 
     targetVelocity.current.set(0, 0, 0)
 
@@ -170,9 +237,9 @@ export function PlayerController () {
           : PLAYER_SETTINGS.movementSpeed)
     }
 
-    const smoothing = hasMovementInput
-      ? PLAYER_SETTINGS.movementAcceleration
-      : PLAYER_SETTINGS.movementDeceleration
+    const acceleration = previousJumps > 0 ? PLAYER_SETTINGS.airAcceleration : PLAYER_SETTINGS.movementAcceleration
+    const deceleration = previousJumps > 0 ? PLAYER_SETTINGS.airDeceleration : PLAYER_SETTINGS.movementDeceleration
+    const smoothing = hasMovementInput ? acceleration : deceleration
 
     velocity.current.x = MathUtils.damp(
       velocity.current.x,
@@ -187,12 +254,9 @@ export function PlayerController () {
       frameDelta
     )
 
-    if (
-      !hasMovementInput &&
-      velocity.current.lengthSq() < PLAYER_SETTINGS.movementEpsilon ** 2
-    ) {
-      velocity.current.set(0, 0, 0)
-      return
+    if (!hasMovementInput && Math.hypot(velocity.current.x, velocity.current.z) < PLAYER_SETTINGS.movementEpsilon) {
+      stopHorizontal(velocity.current)
+      if (jumpsUsed === 0) return
     }
 
     // The footprint remains inside the world at every yaw angle.
@@ -202,34 +266,59 @@ export function PlayerController () {
     const previousZ = position.z
     const requestedX = previousX + velocity.current.x * frameDelta
     const requestedZ = previousZ + velocity.current.z * frameDelta
-    const nextX = MathUtils.clamp(
+    let nextX = MathUtils.clamp(
       requestedX,
       WORLD_BOUNDS.minX + footprintRadius,
       WORLD_BOUNDS.maxX - footprintRadius
     )
-    const nextZ = MathUtils.clamp(
+    let nextZ = MathUtils.clamp(
       requestedZ,
       WORLD_BOUNDS.minZ + footprintRadius,
       WORLD_BOUNDS.maxZ - footprintRadius
     )
-    const nextChunk = chunkKey(nextX, nextZ)
-    if (!world.readyChunks.has(nextChunk)) {
-      if (import.meta.env.DEV && waitingForChunk.current !== nextChunk) {
-        recordTerrainEvent('movement-waiting-for-chunk', { key: nextChunk, x: nextX, z: nextZ })
-        waitingForChunk.current = nextChunk
+    let nextChunk = chunkKey(nextX, nextZ)
+    if (nextX !== previousX || nextZ !== previousZ) {
+      const ready = world.readyChunks.has(nextChunk)
+      if (!ready) {
+        if (import.meta.env.DEV && waitingForChunk.current !== nextChunk) {
+          recordTerrainEvent('movement-waiting-for-chunk', { key: nextChunk, x: nextX, z: nextZ })
+          waitingForChunk.current = nextChunk
+        }
+      } else if (import.meta.env.DEV && waitingForChunk.current !== null) {
+        recordTerrainEvent('movement-chunk-ready', { key: waitingForChunk.current })
+        waitingForChunk.current = null
       }
-      velocity.current.set(0, 0, 0)
-      return
+      if (!ready || !isTerrainWalkable(nextX, nextZ, FOOTPRINT_RADIUS)) {
+        stopHorizontal(velocity.current)
+        if (jumpsUsed === 0) return
+        // Keep falling if a chunk or the shoreline blocks horizontal movement.
+        nextX = previousX
+        nextZ = previousZ
+        nextChunk = chunkKey(nextX, nextZ)
+      }
     }
-    if (import.meta.env.DEV && waitingForChunk.current !== null) {
-      recordTerrainEvent('movement-chunk-ready', { key: waitingForChunk.current })
-      waitingForChunk.current = null
+    const groundY = sampleGroundHeight(scene, ground, nextChunk, nextX, nextZ) + halfHeight
+    let nextY = groundY
+    let landedAt = 0
+    if (jumpsUsed > 0) {
+      const launchVelocity = jumpsUsed === 1 && !input.held
+        ? Math.min(velocity.current.y, PLAYER_SETTINGS.shortJumpSpeed)
+        : velocity.current.y
+      // Split the step at the apex so faster falling starts independently of frame rate.
+      const risingTime = Math.min(frameDelta, Math.max(0, launchVelocity / PLAYER_SETTINGS.gravity))
+      const fallingTime = frameDelta - risingTime
+      const fallingVelocity = launchVelocity - PLAYER_SETTINGS.gravity * risingTime
+      velocity.current.y = fallingVelocity - PLAYER_SETTINGS.fallGravity * fallingTime
+      const airborneY = position.y +
+        (launchVelocity + fallingVelocity) * risingTime / 2 +
+        (fallingVelocity + velocity.current.y) * fallingTime / 2
+      nextY = Math.max(groundY, airborneY)
+      if (airborneY <= groundY && velocity.current.y <= 0) {
+        velocity.current.y = 0
+        jumpsUsed = 0
+        landedAt = now
+      }
     }
-    if (!isTerrainWalkable(nextX, nextZ, FOOTPRINT_RADIUS)) {
-      velocity.current.set(0, 0, 0)
-      return
-    }
-    const nextY = sampleTerrainHeight(nextX, nextZ) + halfHeight
     const movementX = nextX - previousX
     const movementZ = nextZ - previousZ
 
@@ -249,11 +338,12 @@ export function PlayerController () {
 
     mesh.position.set(nextX, nextY, nextZ)
     position.copy(mesh.position)
+    if (jumpsUsed !== previousJumps) player.set(JumpState, { jumpsUsed, landedAt })
     player.set(Facing, { yaw: mesh.rotation.y })
     if (controls?.target) {
       controls.target.copy(mesh.position)
     }
-  })
+  }, -2)
 
   return (
     <group ref={meshRef} position={PLAYER_SETTINGS.position}>

@@ -107,6 +107,7 @@ export const TERRAIN_GENERATION = {
 
 export const TERRAIN_CHUNKS = {
   size: 64,
+  distantSectorChunks: 7,
   segments: 16,
   lodSegments: [16, 8, 4],
   lodRings: [2, 3],
@@ -116,6 +117,7 @@ export const TERRAIN_CHUNKS = {
   radius: 5,
   streaming: {
     spareChunks: 24,
+    fadeMs: 420,
     retirementGraceMs: 750,
     retirementIntervalMs: 50,
     windowSettleMs: 150

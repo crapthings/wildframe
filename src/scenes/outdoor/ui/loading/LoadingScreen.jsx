@@ -62,7 +62,7 @@ export function LoadingScreen () {
         )}
       </div>
       <p className='absolute bottom-10 text-center text-[0.65rem] leading-6 tracking-wide text-white/35'>
-        WASD to move · Shift to sprint<br />Drag to look · Scroll to zoom · Tab for map
+        WASD to move · Shift to sprint · Space to double jump<br />Drag to look · Scroll to zoom · Tab for map
       </p>
     </section>
   )

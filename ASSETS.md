@@ -57,6 +57,6 @@ jacaranda_tree.bin
 textures/
 ```
 
-The tree loads after scene entry and is optional for entering the world. Its current binary is over 200 MB and the model is very high detail; plan a lighter asset for wider distribution. It is included in the release asset pack, not ordinary Git history.
+The release asset pack contains the source tree. Vite generates a lighter `jacaranda_tree_runtime.glb` from its geometry and reuses the files in `textures/`. The browser loads the generated model after scene entry.
 
 The tree, terrain sets, and environment were supplied as local development assets. Their ownership and licenses are separate from the Wildframe source code. No project-code license should be assumed to cover them.

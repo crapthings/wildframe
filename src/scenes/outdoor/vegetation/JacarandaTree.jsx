@@ -1,13 +1,14 @@
 import 'three-hex-tiling'
 import { useEffect, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { LoadingManager } from 'three'
+import { LoadingManager, MathUtils } from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { OUTDOOR_ASSETS } from '../assets'
 import { TERRAIN_SETTINGS, TREE_SETTINGS as settings } from '../constants'
 import { useWorldStore } from '../state/worldStore'
 import { sampleTerrainHeight } from '../terrain/generation/sampleTerrain'
 import { applyHeightFog } from '../terrain/materials/heightFog'
+import { coverageDither } from '../terrain/materials/coverageDither.js'
 
 function disposeTree (root) {
   const resources = new Set()
@@ -26,6 +27,7 @@ export function JacarandaTree () {
   const entered = useWorldStore((state) => state.sceneEntered)
   const [tree, setTree] = useState(null)
   const root = useRef()
+  const coverage = useRef({ value: 0 }).current
   useEffect(() => {
     if (!entered) return
     let cancelled = false
@@ -58,6 +60,12 @@ export function JacarandaTree () {
           material.onBeforeCompile = function (shader, renderer) {
             compile.call(this, shader, renderer)
             applyHeightFog(shader)
+            shader.uniforms.treeCoverage = coverage
+            shader.fragmentShader = `uniform float treeCoverage;\n${coverageDither}\n` + shader.fragmentShader
+            shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+              if (treeCoverage < 1.0 && coverageThreshold() >= treeCoverage) discard;
+              #include <opaque_fragment>
+            `)
             if (leaves) {
               // A multiplier alone cannot raise low values from the roughness map.
               shader.fragmentShader = shader.fragmentShader.replace(
@@ -67,7 +75,7 @@ export function JacarandaTree () {
             }
           }
           const cacheKey = material.customProgramCacheKey.bind(material)
-          material.customProgramCacheKey = () => `jacaranda-height-fog-v2-${leaves ? settings.leaves.minimumRoughness : 'bark'}-${cacheKey()}`
+          material.customProgramCacheKey = () => `jacaranda-height-fog-coverage-${leaves ? settings.leaves.minimumRoughness : 'bark'}-${cacheKey()}`
           material.needsUpdate = true
         }
       })
@@ -79,17 +87,20 @@ export function JacarandaTree () {
       cancelled = true
       if (loaded) disposeTree(loaded)
     }
-  }, [entered])
+  }, [entered, coverage])
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera }, delta) => {
     if (!root.current) return
     const distance = Math.hypot(camera.position.x - settings.x, camera.position.z - settings.z)
-    root.current.visible = distance < (root.current.visible ? settings.hideDistance : settings.showDistance)
+    const target = 1 - MathUtils.smoothstep(distance, settings.fadeStartDistance, settings.fadeEndDistance)
+    const step = Math.min(delta, 0.1) / settings.fadeSeconds
+    coverage.value += MathUtils.clamp(target - coverage.value, -step, step)
+    root.current.visible = coverage.value > 0
   })
 
   if (!tree) return null
   return (
-    <group ref={root} position={[settings.x, sampleTerrainHeight(settings.x, settings.z) - settings.sink, settings.z]} rotation={[0, settings.yaw, 0]} scale={settings.scale}>
+    <group ref={root} visible={false} position={[settings.x, sampleTerrainHeight(settings.x, settings.z) - settings.sink, settings.z]} rotation={[0, settings.yaw, 0]} scale={settings.scale}>
       <primitive object={tree} dispose={null} />
     </group>
   )

@@ -4,7 +4,7 @@ A procedural open-world playground built with React Three Fiber.
 
 Explore a seeded landscape of rolling terrain, mountain ridges, and coastline. Wildframe is an experimental browser-based world, with an emphasis on terrain streaming, third-person exploration, and real-time rendering.
 
-[Browser demo](https://crapthings.github.io/wildframe/) — available after the first successful Pages deployment. Use a desktop browser with WebGL2, a keyboard, and a mouse. The high-detail tree downloads after entering the scene and may take time on slower connections.
+[Browser demo](https://crapthings.github.io/wildframe/) — available after the first successful Pages deployment. Use a desktop browser with WebGL2, a keyboard, and a mouse. The optional sample tree downloads after scene entry.
 
 ## Current features
 
@@ -39,7 +39,7 @@ It installs the pnpm version in `package.json`, restores the pinned release asse
 
 Local development defaults to `/`. To check the project-site build locally, run `VITE_BASE_PATH=/wildframe/ pnpm build`, then `pnpm preview` and open `/wildframe/`. Model, HDR, and texture URLs all use Vite's `BASE_URL`; Worker entry points are resolved by Vite.
 
-When publishing updated assets, update `ASSET_RELEASE`, `ASSET_ARCHIVE`, and `ASSET_SHA256` in the workflow together. The site includes the full asset set and is relatively large; monitor bandwidth and optimize the sample tree before promoting the demo widely.
+When publishing updated assets, update `ASSET_RELEASE`, `ASSET_ARCHIVE`, and `ASSET_SHA256` in the workflow together.
 
 ## Controls
 
@@ -47,6 +47,7 @@ When publishing updated assets, update `ASSET_RELEASE`, `ASSET_ARCHIVE`, and `AS
 | --- | --- |
 | W / A / S / D | Move relative to the camera |
 | Shift | Sprint |
+| Space | Tap for a short jump or hold for more height. Press again in the air to double jump. |
 | Left or right mouse drag | Look around |
 | Mouse wheel | Zoom |
 | Tab | Toggle the terrain map |

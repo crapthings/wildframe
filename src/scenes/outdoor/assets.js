@@ -2,7 +2,7 @@
 const assetUrl = (path) => `${import.meta.env.BASE_URL}${path}`
 
 export const OUTDOOR_ASSETS = {
-  jacarandaTree: assetUrl('assets/models/vegetation/jacaranda_tree/jacaranda_tree_1k.gltf'),
+  jacarandaTree: assetUrl('assets/models/vegetation/jacaranda_tree/jacaranda_tree_runtime.glb'),
   player: assetUrl('assets/models/characters/Zombie_Male.gltf'),
   rockFace: {
     color: assetUrl('assets/textures/terrain/rock_face_04/rock_face_04_diff_2k.jpg'),

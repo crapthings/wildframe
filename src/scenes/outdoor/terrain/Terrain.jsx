@@ -21,14 +21,14 @@ function recordTerrainRender (id, phase, actualDuration, baseDuration, startTime
   }, commitTime)
 }
 
-export function Terrain () {
-  const chunks = useTerrainChunks()
+export function Terrain ({ coverage }) {
+  const chunks = useTerrainChunks(coverage)
   const surfaces = useSurfaceTextures()
-  const meshes = <Suspense fallback={null}><TerrainMeshes chunks={chunks} surfaces={surfaces} /></Suspense>
+  const meshes = <Suspense fallback={null}><TerrainMeshes chunks={chunks} coverage={coverage} surfaces={surfaces} /></Suspense>
   return import.meta.env.DEV ? <Profiler id='terrain' onRender={recordTerrainRender}>{meshes}</Profiler> : meshes
 }
 
-function TerrainMeshes ({ chunks, surfaces }) {
+function TerrainMeshes ({ chunks, coverage, surfaces }) {
   const rendered = useRef(false)
   const [colorMap, normalMap, roughnessMap, grassColor, grassNormal, grassRoughness, mountainColor, mountainNormal, mountainRoughness, bareNormal] = useTexture([
     OUTDOOR_ASSETS.terrain.color,
@@ -48,7 +48,7 @@ function TerrainMeshes ({ chunks, surfaces }) {
     () => [colorMap, normalMap, roughnessMap, grassColor, grassNormal, grassRoughness, mountainColor, mountainNormal, mountainRoughness],
     [colorMap, normalMap, roughnessMap, grassColor, grassNormal, grassRoughness, mountainColor, mountainNormal, mountainRoughness]
   )
-  const material = useMemo(() => footPacked ? createTerrainMaterial([...textures, footPacked, footNormal, barePacked, bareNormal]) : null, [textures, footPacked, footNormal, barePacked, bareNormal])
+  const material = useMemo(() => footPacked ? createTerrainMaterial([...textures, footPacked, footNormal, barePacked, bareNormal], coverage) : null, [textures, footPacked, footNormal, barePacked, bareNormal, coverage])
   useEffect(() => () => material?.dispose(), [material])
   const textureRepeat = 1 / TERRAIN_SETTINGS.textureWorldSize
 
@@ -78,12 +78,13 @@ function TerrainMeshes ({ chunks, surfaces }) {
 
   return <>{chunks.map((chunk) => (
     <TerrainChunk key={chunk.key} chunk={chunk} material={material} rendered={rendered} />
-  ))}<Rocks chunks={chunks} /></>
+  ))}<Rocks chunks={chunks} coverage={coverage} /></>
 }
 
 const TerrainChunk = memo(function TerrainChunk ({ chunk, material, rendered }) {
-  const { positions, normals, uvs, blends, details, indices } = chunk
+  const { mesh } = chunk.buffers
   const geometry = useMemo(() => {
+    const { positions, normals, uvs, blends, details, indices } = mesh
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new BufferAttribute(positions, 3))
     geometry.setAttribute('normal', new BufferAttribute(normals, 3))
@@ -92,7 +93,7 @@ const TerrainChunk = memo(function TerrainChunk ({ chunk, material, rendered }) 
     geometry.setAttribute('terrainDetails', new BufferAttribute(details, 2))
     geometry.setIndex(new BufferAttribute(indices, 1))
     return geometry
-  }, [positions, normals, uvs, blends, details, indices])
+  }, [mesh])
   useLayoutEffect(() => {
     retainTerrainGeometry(geometry)
     return () => retireTerrainGeometry(geometry)
@@ -116,7 +117,5 @@ const TerrainChunk = memo(function TerrainChunk ({ chunk, material, rendered }) 
       }}
     />
   )
-}, (a, b) => a.material === b.material && a.chunk.positions === b.chunk.positions &&
-  a.chunk.normals === b.chunk.normals && a.chunk.indices === b.chunk.indices &&
-  a.chunk.uvs === b.chunk.uvs && a.chunk.blends === b.chunk.blends && a.chunk.details === b.chunk.details &&
+}, (a, b) => a.material === b.material && a.chunk.buffers === b.chunk.buffers &&
   (a.chunk.distance <= 4) === (b.chunk.distance <= 4))
